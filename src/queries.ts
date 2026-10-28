@@ -1,6 +1,6 @@
 import { auditLedger } from "./audit.js";
 import { normalizeName, validateUuid } from "./domain.js";
-import { checked, checkedAdd, checkedNegate } from "./money.js";
+import { checked } from "./money.js";
 import { CoreError } from "./types.js";
 import type { LedgerStore, LedgerReader } from "./ports.js";
 import type { CoreService } from "./core.js";
@@ -50,13 +50,11 @@ export function createQueries(store: LedgerStore): Queries {
       }),
     getTotals: () =>
       store.read((tx) => {
-        let receivableMinor = 0;
-        let payableMinor = 0;
-        for (const p of tx.listParties()) {
-          const amount = tx.getPosition(p.id).amountMinor;
-          if (amount > 0) receivableMinor = checkedAdd(receivableMinor, amount);
-          else payableMinor = checkedAdd(payableMinor, checkedNegate(amount));
-        }
+        const totals = tx.getTotals();
+        const receivableMinor = checked(totals.receivableMinor);
+        const payableMinor = checked(totals.payableMinor);
+        if (receivableMinor < 0 || payableMinor < 0)
+          throw new CoreError("LEDGER_INTEGRITY_FAILURE");
         return { receivableMinor, payableMinor };
       }),
     getPartyHistory: (id, paging) =>

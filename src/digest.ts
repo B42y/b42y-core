@@ -1,4 +1,6 @@
-// Synchronous, portable SHA-256 for short canonical command and preview payloads.
+// Synchronous, portable SHA-256 for bounded command and preview payloads.
+export const MAX_DIGEST_BYTES = 32 * 1024;
+export class DigestInputError extends Error {}
 const K = [
   0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1,
   0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
@@ -15,14 +17,23 @@ const K = [
 const rotate = (x: number, n: number) => (x >>> n) | (x << (32 - n));
 
 function utf8(value: string): number[] {
+  if (typeof value !== "string")
+    throw new DigestInputError("Digest input must be text");
+  if (value.length > MAX_DIGEST_BYTES)
+    throw new DigestInputError("Digest input exceeds 32 KiB");
   const bytes: number[] = [];
   for (let i = 0; i < value.length; i++) {
     let cp = value.charCodeAt(i);
     if (cp >= 0xd800 && cp <= 0xdbff) {
       const low = value.charCodeAt(++i);
-      if (!(low >= 0xdc00 && low <= 0xdfff)) throw new Error("Invalid Unicode");
+      if (!(low >= 0xdc00 && low <= 0xdfff))
+        throw new DigestInputError("Invalid Unicode");
       cp = 0x10000 + ((cp - 0xd800) << 10) + low - 0xdc00;
-    } else if (cp >= 0xdc00 && cp <= 0xdfff) throw new Error("Invalid Unicode");
+    } else if (cp >= 0xdc00 && cp <= 0xdfff)
+      throw new DigestInputError("Invalid Unicode");
+    const width = cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4;
+    if (bytes.length + width > MAX_DIGEST_BYTES)
+      throw new DigestInputError("Digest input exceeds 32 KiB");
     if (cp < 0x80) bytes.push(cp);
     else if (cp < 0x800) bytes.push(0xc0 | (cp >> 6), 0x80 | (cp & 63));
     else if (cp < 0x10000)

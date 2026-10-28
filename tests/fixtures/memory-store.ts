@@ -1,5 +1,5 @@
 import { CoreError } from "../../src/types.js";
-import { checkedAdd } from "../../src/money.js";
+import { checkedAdd, checkedNegate } from "../../src/money.js";
 import { validateEntry } from "../../src/domain.js";
 import type {
   CommandReceipt,
@@ -31,7 +31,14 @@ export class MemoryStore implements LedgerStore {
   private sequence = 0;
   private readOnly = false;
   private queue: Promise<void> = Promise.resolve();
-  failAt: "append" | "receipt" | "commit" | undefined;
+  failAt:
+    | "sequence"
+    | "append"
+    | "partyRevision"
+    | "position"
+    | "receipt"
+    | "commit"
+    | undefined;
   failOnAppendNumber: number | undefined;
   loseResponse = false;
   failRecovery = false;
@@ -78,6 +85,17 @@ export class MemoryStore implements LedgerStore {
       hasPartyHistory: (id) => (this.historyIds.get(id)?.length ?? 0) > 0,
       getPosition: (id) =>
         copy(this.positions.get(id) ?? { amountMinor: 0, revision: 0 }),
+      getTotals: () => {
+        let receivableMinor = 0,
+          payableMinor = 0;
+        for (const { amountMinor } of this.positions.values()) {
+          if (amountMinor > 0)
+            receivableMinor = checkedAdd(receivableMinor, amountMinor);
+          else
+            payableMinor = checkedAdd(payableMinor, checkedNegate(amountMinor));
+        }
+        return { receivableMinor, payableMinor };
+      },
       lastSequence: () => this.sequence,
       history: (id, highWater, afterSequence, limit) => {
         const ids = this.historyIds.get(id) ?? [];
@@ -150,10 +168,10 @@ export class MemoryStore implements LedgerStore {
     const tx: LedgerTransaction = {
       ...this.reader(),
       putReceipt: (receipt) => {
-        if (this.failAt === "receipt") throw new Error("injected");
         if (this.receipts.has(receipt.commandId))
           throw new CoreError("IDEMPOTENCY_CONFLICT");
         put(this.receipts, receipt.commandId, receipt);
+        if (this.failAt === "receipt") throw new Error("injected");
       },
       insertParty: (party) => {
         if (this.parties.has(party.id)) throw new CoreError("INVALID_PARTY");
@@ -163,6 +181,7 @@ export class MemoryStore implements LedgerStore {
       updateParty: (party) => {
         if (!this.parties.has(party.id)) throw new CoreError("INVALID_PARTY");
         put(this.parties, party.id, party);
+        if (this.failAt === "partyRevision") throw new Error("injected");
       },
       deleteParty: (id) => {
         if (this.historyIds.get(id)?.length)
@@ -182,6 +201,7 @@ export class MemoryStore implements LedgerStore {
         undo.push(() => {
           this.sequence = prior;
         });
+        if (this.failAt === "sequence") throw new Error("injected");
         return this.sequence;
       },
       appendEntry: (entry) => {
@@ -245,6 +265,7 @@ export class MemoryStore implements LedgerStore {
         )
           throw new CoreError("LEDGER_INTEGRITY_FAILURE");
         put(this.positions, id, { amountMinor, revision });
+        if (this.failAt === "position") throw new Error("injected");
       },
     };
     try {
@@ -277,6 +298,11 @@ export class MemoryStore implements LedgerStore {
       parties: [...this.parties.values()].map(copy),
       entries: [...this.entries.values()].map(copy),
       receipts: [...this.receipts.values()].map(copy),
+      positions: [...this.positions.entries()].map(copy),
+      reversals: [...this.reversals.entries()].map(copy),
+      historyIds: [...this.historyIds.entries()].map(copy),
+      sequenceIndex: [...this.sequenceIndex.entries()].map(copy),
+      sequence: this.sequence,
       readOnly: this.readOnly,
     };
   }

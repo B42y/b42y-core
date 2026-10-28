@@ -133,7 +133,15 @@ describe("hardening regressions", () => {
       code: "STORAGE_UNAVAILABLE",
     });
   });
-  it.each(["append", "receipt", "commit"] as const)(
+  it.each([
+    "sequence",
+    "append",
+    "partyRevision",
+    "position",
+    "receipt",
+    "commit",
+    "secondAppend",
+  ] as const)(
     "rolls back every correction record on %s failure",
     async (stage) => {
       const { core, store, fixture } = setup();
@@ -153,7 +161,8 @@ describe("hardening regressions", () => {
         occurredAtUtc: date,
       });
       const before = store.snapshot();
-      store.failAt = stage;
+      if (stage === "secondAppend") store.failOnAppendNumber = 2;
+      else store.failAt = stage;
       await expect(
         core.correct({
           commandId: fixture.ids.newId(),
@@ -168,7 +177,16 @@ describe("hardening regressions", () => {
       ).rejects.toMatchObject({ code: "TRANSACTION_FAILED" });
       expect(store.snapshot()).toEqual(before);
       store.failAt = undefined;
+      store.failOnAppendNumber = undefined;
       expect((await core.verifyLedger()).valid).toBe(true);
+      const next = await core.post({
+        commandId: fixture.ids.newId(),
+        partyId: a.id,
+        operation: "ADD_RECEIVABLE",
+        amountMinor: 1,
+        occurredAtUtc: date,
+      });
+      expect(next.lastSequence).toBe(before.sequence + 1);
     },
   );
   it("detects a corrupted receipt during explicit full audit", async () => {
@@ -254,5 +272,101 @@ describe("hardening regressions", () => {
     expect(
       [...first.items, ...second.items].map((entry) => entry.sequence),
     ).toEqual([3, 1, 4, 2]);
+  });
+  it("rejects an oversized command without any persisted changes", async () => {
+    const { core, store, fixture } = setup();
+    const p = await core.createParty({
+      commandId: fixture.ids.newId(),
+      displayName: "A",
+    });
+    const before = store.snapshot();
+    await expect(
+      core.post({
+        commandId: fixture.ids.newId(),
+        partyId: p.id,
+        operation: "ADD_RECEIVABLE",
+        amountMinor: 1,
+        occurredAtUtc: date,
+        note: "x".repeat(33_000),
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_COMMAND" });
+    expect(store.snapshot()).toEqual(before);
+  });
+  it("normalizes equivalent retry payloads", async () => {
+    const { core, store, fixture } = setup();
+    const commandId = fixture.ids.newId();
+    const party = await core.createParty({
+      commandId,
+      displayName: "  A   B  ",
+    });
+    expect(await core.createParty({ commandId, displayName: "A B" })).toEqual(
+      party,
+    );
+    const postId = fixture.ids.newId();
+    const post = await core.post({
+      commandId: postId,
+      partyId: party.id,
+      operation: "ADD_RECEIVABLE",
+      amountMinor: 1,
+      occurredAtUtc: "2026-01-01T00:00:00Z",
+    });
+    expect(
+      await core.post({
+        commandId: postId,
+        partyId: party.id,
+        operation: "ADD_RECEIVABLE",
+        amountMinor: 1,
+        occurredAtUtc: date,
+      }),
+    ).toEqual(post);
+    expect(store.snapshot().entries).toHaveLength(1);
+  });
+  it("fails closed for a shape-valid receipt linked to the wrong entry", async () => {
+    const { core, store, fixture } = setup();
+    const p = await core.createParty({
+      commandId: fixture.ids.newId(),
+      displayName: "A",
+    });
+    const first = {
+      commandId: fixture.ids.newId(),
+      partyId: p.id,
+      operation: "ADD_RECEIVABLE" as const,
+      amountMinor: 1,
+      occurredAtUtc: date,
+    };
+    const second = { ...first, commandId: fixture.ids.newId() };
+    await core.post(first);
+    const other = await core.post(second);
+    store.corruptReceipt(first.commandId, (receipt) => ({
+      ...receipt,
+      result: { ...(receipt.result as object), entryIds: [...other.entryIds] },
+    }));
+    await expect(core.post(first)).rejects.toMatchObject({
+      code: "LEDGER_INTEGRITY_FAILURE",
+    });
+    expect(store.snapshot().readOnly).toBe(true);
+  });
+  it("fails closed for an oversized persisted receipt", async () => {
+    const { core, store, fixture } = setup();
+    const p = await core.createParty({
+      commandId: fixture.ids.newId(),
+      displayName: "A",
+    });
+    const command = {
+      commandId: fixture.ids.newId(),
+      partyId: p.id,
+      operation: "ADD_RECEIVABLE" as const,
+      amountMinor: 1,
+      occurredAtUtc: date,
+    };
+    await core.post(command);
+    store.corruptReceipt(command.commandId, (receipt) => ({
+      ...receipt,
+      canonicalPayload: "x".repeat(33_000),
+    }));
+    await expect(core.post(command)).rejects.toMatchObject({
+      code: "LEDGER_INTEGRITY_FAILURE",
+    });
+    expect(store.snapshot().readOnly).toBe(true);
   });
 });

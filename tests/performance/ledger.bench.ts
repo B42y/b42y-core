@@ -5,6 +5,9 @@ import { MemoryStore, fixtures } from "../fixtures/memory-store.js";
 const store = new MemoryStore();
 const fixture = fixtures();
 const core = createCoreService({ store, ...fixture });
+const manyStore = new MemoryStore();
+const manyFixture = fixtures();
+const manyCore = createCoreService({ store: manyStore, ...manyFixture });
 let skewed = "";
 let other = "";
 
@@ -32,6 +35,20 @@ beforeAll(async () => {
   expect(store.scans).toBe(1);
   expect((await core.verifyLedger()).valid).toBe(true);
   expect(store.scans).toBe(2);
+  for (let i = 0; i < 10_000; i++) {
+    const party = await manyCore.createParty({
+      commandId: manyFixture.ids.newId(),
+      displayName: `Party ${i}`,
+    });
+    await manyCore.post({
+      commandId: manyFixture.ids.newId(),
+      partyId: party.id,
+      operation: "ADD_RECEIVABLE",
+      amountMinor: 1,
+      occurredAtUtc: manyFixture.clock.nowUtc(),
+    });
+  }
+  expect(manyStore.scans).toBe(1);
 }, 180_000);
 
 bench("indexed position and totals at 100k entries", async () => {
@@ -67,4 +84,13 @@ bench("indexed skewed-party history pages at 100k entries", async () => {
   expect(second.items).toHaveLength(50);
   expect(second.items[0]!.sequence).toBeLessThan(first.items.at(-1)!.sequence);
   expect(store.scans).toBe(before);
+});
+
+bench("totals across 10k parties", async () => {
+  const before = manyStore.scans;
+  expect(await manyCore.getTotals()).toEqual({
+    receivableMinor: 10_000,
+    payableMinor: 0,
+  });
+  expect(manyStore.scans).toBe(before);
 });

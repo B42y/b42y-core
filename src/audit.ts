@@ -81,7 +81,7 @@ export function auditLedger(tx: LedgerReader): LedgerIntegrityReport {
         (command as { commandId?: unknown }).commandId !== entry.commandId
       )
         throw new Error("receipt command");
-      checkedReceiptResult(expectedKind, result);
+      checkedReceiptResult(expectedKind, result, tx, entry.commandId);
       if (result.entryIds.length !== (expectedKind === "correct" ? 2 : 1))
         throw new Error("receipt entries");
       const line = entry.lines.find(
@@ -167,37 +167,12 @@ export function auditLedger(tx: LedgerReader): LedgerIntegrityReport {
         (command as { commandId?: unknown }).commandId !== receipt.commandId
       )
         throw new Error("receipt command");
-      checkedReceiptResult(receipt.kind as CommandKind, receipt.result);
-      if (
-        receipt.kind === "post" ||
-        receipt.kind === "reverse" ||
-        receipt.kind === "correct" ||
-        receipt.kind === "setOpeningPosition"
-      ) {
-        const result = receipt.result as {
-          entryIds: string[];
-          lastSequence: number;
-        };
-        if (
-          result.entryIds.length !==
-            (receipt.kind === "correct"
-              ? 2
-              : receipt.kind === "setOpeningPosition"
-                ? result.entryIds.length
-                : 1) ||
-          (receipt.kind === "setOpeningPosition" && result.entryIds.length > 1)
-        )
-          throw new Error("receipt count");
-        for (const id of result.entryIds) {
-          const entry = tx.getEntry(id);
-          if (
-            !entry ||
-            entry.commandId !== receipt.commandId ||
-            entry.sequence > result.lastSequence
-          )
-            throw new Error("receipt entry");
-        }
-      }
+      checkedReceiptResult(
+        receipt.kind as CommandKind,
+        receipt.result,
+        tx,
+        receipt.commandId,
+      );
     } catch {
       issue(`receipt:${receipt.commandId}`);
     }

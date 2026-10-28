@@ -13,7 +13,7 @@ import { CoreError } from "./types.js";
 import { auditLedger } from "./audit.js";
 import { createQueries } from "./queries.js";
 import { validatedCommand } from "./validation.js";
-import { sha256 } from "./digest.js";
+import { DigestInputError, sha256 } from "./digest.js";
 import { checkedReceiptResult } from "./receipt.js";
 import type { CommandKind } from "./validation.js";
 import type {
@@ -180,20 +180,35 @@ export function createCoreService(deps: {
     const validated = validatedCommand(kind, command);
     const commandId = validated.commandId as string;
     const payload = canonical([1, kind, meaning(validated)]);
+    let payloadHash: string;
+    try {
+      payloadHash = canonicalHash(payload);
+    } catch (error) {
+      if (error instanceof DigestInputError)
+        throw new CoreError("INVALID_COMMAND");
+      throw error;
+    }
     try {
       await ready;
       return await store.write((tx) => {
         const prior = tx.getReceipt(commandId);
         if (prior) {
+          let storedHash: string;
+          try {
+            storedHash = canonicalHash(prior.canonicalPayload);
+          } catch {
+            throw new CoreError("LEDGER_INTEGRITY_FAILURE");
+          }
           if (
             prior.schemaVersion !== 1 ||
+            prior.commandId !== commandId ||
             prior.kind !== kind ||
-            prior.canonicalPayloadHash !== canonicalHash(prior.canonicalPayload)
+            prior.canonicalPayloadHash !== storedHash
           )
             throw new CoreError("LEDGER_INTEGRITY_FAILURE");
           if (prior.canonicalPayload !== payload)
             throw new CoreError("IDEMPOTENCY_CONFLICT");
-          return checkedReceiptResult(kind, prior.result) as T;
+          return checkedReceiptResult(kind, prior.result, tx, commandId) as T;
         }
         assertHealth(tx);
         const result = work(tx, validated as C);
@@ -202,7 +217,7 @@ export function createCoreService(deps: {
           commandId,
           kind,
           canonicalPayload: payload,
-          canonicalPayloadHash: canonicalHash(payload),
+          canonicalPayloadHash: payloadHash,
           result,
         });
         return result;

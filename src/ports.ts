@@ -26,6 +26,8 @@ export interface LedgerReader {
   getReversal(entryId: string): JournalEntry | undefined;
   hasPartyHistory(partyId: string): boolean;
   getPosition(partyId: string): { amountMinor: number; revision: number };
+  /** Aggregate the current position projection without materializing party records. */
+  getTotals(): { receivableMinor: number; payableMinor: number };
   lastSequence(): number;
   history(
     partyId: string,
