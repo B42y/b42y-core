@@ -3,6 +3,7 @@ import type { CommandId, JournalEntry, Party } from "./types.js";
 export interface CommandReceipt {
   readonly schemaVersion: 1;
   readonly commandId: CommandId;
+  readonly kind: string;
   readonly canonicalPayload: string;
   /** Deterministic index checksum; full payload equality is authoritative. */
   readonly canonicalPayloadHash: string;
@@ -14,7 +15,14 @@ export interface LedgerReader {
   getReceipt(commandId: CommandId): CommandReceipt | undefined;
   getParty(partyId: string): Party | undefined;
   listParties(): readonly Party[];
-  listEntries(): readonly JournalEntry[];
+  getEntry(entryId: string): JournalEntry | undefined;
+  getReversal(entryId: string): JournalEntry | undefined;
+  hasPartyHistory(partyId: string): boolean;
+  getPosition(partyId: string): { amountMinor: number; revision: number };
+  lastSequence(): number;
+  history(partyId: string, highWater: number, afterSequence: number | undefined, limit: number): readonly JournalEntry[];
+  /** Ordered by sequence, lazy and bounded by adapter page size. Audit-only. */
+  auditEntries(): Iterable<JournalEntry>;
   isReadOnly(): boolean;
 }
 
@@ -23,7 +31,9 @@ export interface LedgerTransaction extends LedgerReader {
   insertParty(party: Party): void;
   updateParty(party: Party): void;
   deleteParty(partyId: string): void;
+  allocateSequence(): number;
   appendEntry(entry: JournalEntry): void;
+  updatePosition(partyId: string, amountMinor: number, revision: number): void;
 }
 
 export interface LedgerStore {

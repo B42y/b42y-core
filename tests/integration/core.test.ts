@@ -348,7 +348,7 @@ describe("contract examples", () => {
     const b = await core.post({
       commandId: command(),
       partyId: p.id,
-      operation: "PAY",
+      operation: "ADD_RECEIVABLE",
       amountMinor: 50,
       occurredAtUtc: date,
     });
@@ -380,7 +380,7 @@ describe("contract examples", () => {
       occurredAtUtc: date,
     });
     await store.write((tx) => {
-      const copy = tx.listEntries()[0]!;
+      const copy = tx.getEntry(store.snapshot().entries[0]!.id)!;
       (copy.lines[0] as { amountMinor: number }).amountMinor = 999;
     });
     expect(await core.getPartyPosition(p.id)).toBe(100);

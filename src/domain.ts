@@ -1,5 +1,6 @@
 import { checkedAdd, checkedNegate, positiveAmount } from "./money.js";
 import { CoreError } from "./types.js";
+import { sha256 } from "./digest.js";
 import type {
   FinancialOperation,
   JournalEntry,
@@ -96,22 +97,23 @@ export function preview(
   delta: number,
   meaning: string,
   operation?: PostOperation,
+  settlementBefore = before,
 ): PreviewResult {
   const after = checkedAdd(before, delta);
   let warning: PreviewResult["warning"];
   if ((before > 0 && after < 0) || (before < 0 && after > 0))
     warning = "SIGN_FLIP";
   else if (
-    (operation === "RECEIVE" && before === 0) ||
-    (operation === "PAY" && before === 0)
+    (operation === "RECEIVE" && settlementBefore === 0) ||
+    (operation === "PAY" && settlementBefore === 0)
   )
     warning = "ZERO_SETTLEMENT";
   else if (
-    (operation === "RECEIVE" && before < 0) ||
-    (operation === "PAY" && before > 0)
+    (operation === "RECEIVE" && settlementBefore < 0) ||
+    (operation === "PAY" && settlementBefore > 0)
   )
     warning = "UNEXPECTED_SETTLEMENT";
-  const previewFingerprint = JSON.stringify([
+  const previewFingerprint = 'v2:' + sha256(JSON.stringify([
     1,
     meaning,
     party.id,
@@ -120,7 +122,7 @@ export function preview(
     after,
     party.ledgerRevision,
     warning ?? null,
-  ]);
+  ]));
   return {
     schemaVersion: 1,
     partyId: party.id,

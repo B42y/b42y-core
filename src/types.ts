@@ -12,6 +12,7 @@ export type FinancialOperation = PostOperation | OpeningOperation | "REVERSAL";
 export type ReplacementOperation = PostOperation | OpeningOperation;
 export type CoreErrorCode =
   | "INVALID_PARTY"
+  | "INVALID_COMMAND"
   | "PARTY_ARCHIVED"
   | "INVALID_NAME"
   | "INVALID_AMOUNT"
