@@ -1,32 +1,25 @@
-﻿# Contract traceability
+# Contract traceability
 
-The TypeScript in `CORE_CONTRACT.md` is illustrative; its financial semantics are normative. Dependency installation is blocked by registry access (`EACCES`), so executable test files are not yet verified. Source-only TypeScript checking, formatting, and a manual compiled correction smoke test passed.
+The financial semantics in `CORE_CONTRACT.md` are normative. Its example TypeScript shapes are reviewed separately. The local in-memory suite now runs; native SQLCipher durability and device recovery remain unverified.
 
-| Requirement               | Code                                                          | Test evidence                 | Status                                     |
-| ------------------------- | ------------------------------------------------------------- | ----------------------------- | ------------------------------------------ |
-| CORE-01, CORE-02, CORE-03 | `makeEntry`, `validateEntry`, `LedgerTransaction.appendEntry` | LEDGER-001, LEDGER-019        | Blocked: suite and adapter pending         |
-| CORE-04                   | `LedgerStore.write` contract                                  | LEDGER-012, failure injection | Blocked: suite and durable adapter pending |
-| CORE-05                   | Append-only port, reversal/correction                         | LEDGER-008, 009, 011, 024     | Blocked: suite and adapter pending         |
-| CORE-06                   | Canonical payload and receipt in serialized write             | LEDGER-006, 007, 022, 023     | Blocked: suite and adapter pending         |
-| CORE-07                   | `original`, reversal uniqueness                               | LEDGER-009, 010               | Blocked: suite and adapter pending         |
-| CORE-08, CORE-09          | `position`, `getTotals`                                       | LEDGER-001–005, 020, 026      | Blocked: suite and adapter pending         |
-| CORE-10                   | `money.ts` checked arithmetic                                 | MONEY-001, 002; LEDGER-025    | Blocked: full test suite unavailable       |
-| CORE-11                   | party active check and archive                                | LEDGER-016                    | Blocked: suite and adapter pending         |
-| CORE-12                   | preview and transaction confirmation                          | LEDGER-005, 021, 029          | Blocked: suite and adapter pending         |
-| CORE-13                   | opening history check and zero receipt                        | LEDGER-014, 015               | Blocked: suite and adapter pending         |
-| CORE-14                   | two correction postings in one `write`                        | LEDGER-011–013, 024, 027–029  | Blocked: suite and adapter pending         |
-| CORE-15                   | injected clock and monotonic sequence                         | LEDGER-001, history tests     | Blocked: suite and adapter pending         |
-| CORE-16                   | `verifyLedger`, persistent recovery port                      | integrity failure test        | Blocked: suite and adapter pending         |
+| Invariant  | Implementation and local evidence                                                                 | Status                                                 |
+| ---------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| CORE-01–03 | `makeEntry`, `validateEntry`, streaming audit; balanced line and ownership tests                  | Local verified; adapter pending                        |
+| CORE-04    | Serialized `LedgerStore.write`; correction failure injection at both appends, receipt, and commit | Local verified; durable adapter pending                |
+| CORE-05    | Immutable entry port; reversal and correction lineage tests                                       | Local verified; adapter pending                        |
+| CORE-06    | Canonical payload comparison, SHA-256 index, receipt shape/kind audit, retry tests                | Local verified; adapter pending                        |
+| CORE-07    | Indexed reversal lookup and uniqueness; active-original tests                                     | Local verified; adapter pending                        |
+| CORE-08–09 | Line-derived audit and projected position; totals and model tests                                 | Local verified; projection rebuild and adapter pending |
+| CORE-10    | Checked arithmetic and independent `bigint` property oracle                                       | Local verified                                         |
+| CORE-11    | Active party check, archive/reactivation tests                                                    | Local verified                                         |
+| CORE-12    | Versioned preview fingerprint and revision check inside writer; stale-preview tests               | Local verified                                         |
+| CORE-13    | History-based opening check, zero-entry receipt tests                                             | Local verified                                         |
+| CORE-14    | Atomic two-entry correction, per-party preview, staged rollback tests                             | Local verified; adapter pending                        |
+| CORE-15    | Injected clock, allocated monotonic sequence, accepted gaps                                       | Local verified; adapter pending                        |
+| CORE-16    | Initialization and explicit bounded-memory audit, persisted read-only recovery port               | Local verified; durable adapter pending                |
 
-| Scenario             | Evidence                          | Status                                     |
-| -------------------- | --------------------------------- | ------------------------------------------ |
-| MONEY-001, MONEY-002 | `tests/unit/money.test.ts`        | Blocked: full test suite unavailable       |
-| LEDGER-001–017       | `tests/integration/core.test.ts`  | Blocked: full test suite / adapter pending |
-| LEDGER-018           | `tests/properties/ledger.test.ts` | Blocked: full test suite unavailable       |
-| LEDGER-019–025       | `tests/integration/core.test.ts`  | Blocked: full test suite / adapter pending |
-| LEDGER-026           | No optional projection is used    | Deferred by contract                       |
-| LEDGER-027–029       | `tests/integration/core.test.ts`  | Blocked: full test suite unavailable       |
+`MONEY-001–002` run in `tests/unit/money.test.ts`. `LEDGER-001–017` and `LEDGER-019–025`, `LEDGER-027–029` run in `tests/integration/core.test.ts`, with added corruption, failure-stage, sequence-gap, and cross-party correction cases in `tests/integration/hardening.test.ts`. `LEDGER-018` has the `bigint` property suite in `tests/properties/ledger.test.ts`. `LEDGER-026` is covered by the journal-authoritative projection check, though a native rebuild test is pending.
 
-Every public command is defined by `CoreService` in `src/core.ts`: party create/edit/archive/reactivate/delete, post, opening, reverse, and correct. Its queries include previews, positions, totals, history, search, and verification. Every command uses the same receipt and transaction path. These commands remain blocked from a verified status until the full suite runs.
+The seeded 100,000-entry benchmark includes a party holding 95% of entries. It checks that ordinary posting, position, and totals paths do not invoke a full audit scan. Host latency is reported separately from future device targets. The in-memory search and history implementation is for behavior testing; native indexed query plans remain pending.
 
-SQLCipher encryption, foreign keys, immutable triggers, device durability, schema migrations, backup/recovery, and real Expo consumption are adapter-dependent. `examples/metro-smoke` supplies an Expo fixture, but its execution remains blocked. These checks must pass in `b42y-app` before a mobile production release.
+SQLCipher encryption, foreign keys, immutable-row triggers, device durability, migration, backup/recovery, indexed query plans, projection rebuild, and Expo consumption must pass in the mobile adapter before production release. No publication or encrypted durability is claimed here.

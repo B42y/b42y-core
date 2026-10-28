@@ -15,6 +15,13 @@ export interface LedgerReader {
   getReceipt(commandId: CommandId): CommandReceipt | undefined;
   getParty(partyId: string): Party | undefined;
   listParties(): readonly Party[];
+  /** Ordered by party ID; return at most limit matches after cursor. Back with an adapter index. */
+  searchParties(
+    searchName: string,
+    includeArchived: boolean,
+    cursor: string | undefined,
+    limit: number,
+  ): readonly Party[];
   getEntry(entryId: string): JournalEntry | undefined;
   getReversal(entryId: string): JournalEntry | undefined;
   hasPartyHistory(partyId: string): boolean;

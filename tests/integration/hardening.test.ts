@@ -133,4 +133,64 @@ describe("hardening regressions", () => {
       code: "STORAGE_UNAVAILABLE",
     });
   });
+  it.each(["append", "receipt", "commit"] as const)(
+    "rolls back every correction record on %s failure",
+    async (stage) => {
+      const { core, store, fixture } = setup();
+      const a = await core.createParty({
+        commandId: fixture.ids.newId(),
+        displayName: "A",
+      });
+      const b = await core.createParty({
+        commandId: fixture.ids.newId(),
+        displayName: "B",
+      });
+      const first = await core.post({
+        commandId: fixture.ids.newId(),
+        partyId: a.id,
+        operation: "ADD_RECEIVABLE",
+        amountMinor: 100,
+        occurredAtUtc: date,
+      });
+      const before = store.snapshot();
+      store.failAt = stage;
+      await expect(
+        core.correct({
+          commandId: fixture.ids.newId(),
+          originalEntryId: first.entryIds[0]!,
+          replacement: {
+            partyId: b.id,
+            operation: "ADD_RECEIVABLE",
+            amountMinor: 50,
+            occurredAtUtc: date,
+          },
+        }),
+      ).rejects.toMatchObject({ code: "TRANSACTION_FAILED" });
+      expect(store.snapshot()).toEqual(before);
+      store.failAt = undefined;
+      expect((await core.verifyLedger()).valid).toBe(true);
+    },
+  );
+  it("detects a corrupted receipt during explicit full audit", async () => {
+    const { core, store, fixture } = setup();
+    const p = await core.createParty({
+      commandId: fixture.ids.newId(),
+      displayName: "A",
+    });
+    const commandId = fixture.ids.newId();
+    await core.setOpeningPosition({
+      commandId,
+      partyId: p.id,
+      targetPositionMinor: 0,
+      occurredAtUtc: date,
+    });
+    store.corruptReceipt(commandId, (receipt) => ({
+      ...receipt,
+      kind: "post",
+    }));
+    const report = await core.verifyLedger();
+    expect(report.valid).toBe(false);
+    expect(report.issues).toContain(`receipt:${commandId}`);
+    expect(store.snapshot().readOnly).toBe(true);
+  });
 });

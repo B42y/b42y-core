@@ -99,30 +99,32 @@ export function createQueries(store: LedgerStore): Queries {
         const limit = checked(query.limit);
         if (limit < 1 || limit > 100) throw new CoreError("INVALID_AMOUNT");
         const search = query.search ? normalizeName(query.search) : "";
-        const sorted = tx
-          .listParties()
-          .filter(
-            (p) =>
-              (query.includeArchived || p.status === "ACTIVE") &&
-              p.searchName.includes(search),
-          )
-          .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-        const start = query.cursor
-          ? sorted.findIndex((p) => p.id === query.cursor) + 1
-          : 0;
-        if (query.cursor && start === 0) throw new CoreError("INVALID_AMOUNT");
-        const items = sorted.slice(start, start + limit);
+        const rows = tx.searchParties(
+          search,
+          query.includeArchived ?? false,
+          query.cursor,
+          limit + 1,
+        );
+        const items = rows.slice(0, limit);
         const last = items.at(-1);
         return {
           schemaVersion: 1,
           items,
-          ...(last && start + limit < sorted.length
-            ? { nextCursor: last.id }
-            : {}),
+          ...(last && rows.length > limit ? { nextCursor: last.id } : {}),
         };
       }),
     verifyLedger: async () => {
-      const report = await store.read(auditLedger);
+      let report;
+      try {
+        report = await store.read(auditLedger);
+      } catch {
+        try {
+          await store.enterReadOnlyRecovery("audit failed");
+        } catch {
+          throw new CoreError("STORAGE_UNAVAILABLE");
+        }
+        throw new CoreError("READ_ONLY_RECOVERY");
+      }
       if (!report.valid) {
         try {
           await store.enterReadOnlyRecovery(report.issues.join(","));

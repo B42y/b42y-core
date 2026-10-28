@@ -41,6 +41,23 @@ export class MemoryStore implements LedgerStore {
         return value && copy(value);
       },
       listParties: () => [...this.parties.values()].map(copy),
+      searchParties: (search, includeArchived, cursor, limit) => {
+        const ids = [...this.parties.keys()].sort();
+        if (cursor && !this.parties.has(cursor))
+          throw new CoreError("INVALID_AMOUNT");
+        const rows: Party[] = [];
+        for (const id of ids) {
+          if (cursor && id <= cursor) continue;
+          const party = this.parties.get(id)!;
+          if (
+            (includeArchived || party.status === "ACTIVE") &&
+            party.searchName.includes(search)
+          )
+            rows.push(copy(party));
+          if (rows.length === limit) break;
+        }
+        return rows;
+      },
       getEntry: (id) => {
         const value = this.entries.get(id);
         return value && copy(value);

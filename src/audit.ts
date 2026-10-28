@@ -69,9 +69,14 @@ export function auditLedger(tx: LedgerReader): LedgerIntegrityReport {
         payload[0] !== 1 ||
         payload[1] !== expectedKind ||
         typeof payload[2] !== "string"
-      ) throw new Error("receipt payload");
+      )
+        throw new Error("receipt payload");
       const command: unknown = JSON.parse(payload[2]);
-      if (!command || typeof command !== "object" || (command as { commandId?: unknown }).commandId !== entry.commandId)
+      if (
+        !command ||
+        typeof command !== "object" ||
+        (command as { commandId?: unknown }).commandId !== entry.commandId
+      )
         throw new Error("receipt command");
       checkedReceiptResult(expectedKind, result);
       if (result.entryIds.length !== (expectedKind === "correct" ? 2 : 1))
@@ -124,37 +129,75 @@ export function auditLedger(tx: LedgerReader): LedgerIntegrityReport {
   }
   if (pendingCorrection) issues.push(`correction:${pendingCorrection.id}`);
   const kinds: readonly string[] = [
-    "createParty", "editParty", "archiveParty", "reactivateParty",
-    "deleteUnpostedParty", "post", "setOpeningPosition", "reverse", "correct",
+    "createParty",
+    "editParty",
+    "archiveParty",
+    "reactivateParty",
+    "deleteUnpostedParty",
+    "post",
+    "setOpeningPosition",
+    "reverse",
+    "correct",
   ];
   for (const receipt of tx.auditReceipts()) {
     try {
-      if (receipt.schemaVersion !== 1 || !kinds.includes(receipt.kind) ||
-          receipt.canonicalPayloadHash !== `v2:${sha256(receipt.canonicalPayload)}`)
+      if (
+        receipt.schemaVersion !== 1 ||
+        !kinds.includes(receipt.kind) ||
+        receipt.canonicalPayloadHash !==
+          `v2:${sha256(receipt.canonicalPayload)}`
+      )
         throw new Error("receipt header");
       const payload: unknown = JSON.parse(receipt.canonicalPayload);
-      if (!Array.isArray(payload) || payload.length !== 3 || payload[0] !== 1 ||
-          payload[1] !== receipt.kind || typeof payload[2] !== "string")
+      if (
+        !Array.isArray(payload) ||
+        payload.length !== 3 ||
+        payload[0] !== 1 ||
+        payload[1] !== receipt.kind ||
+        typeof payload[2] !== "string"
+      )
         throw new Error("receipt payload");
       const command: unknown = JSON.parse(payload[2]);
-      if (!command || typeof command !== "object" ||
-          (command as { commandId?: unknown }).commandId !== receipt.commandId)
+      if (
+        !command ||
+        typeof command !== "object" ||
+        (command as { commandId?: unknown }).commandId !== receipt.commandId
+      )
         throw new Error("receipt command");
       checkedReceiptResult(receipt.kind as CommandKind, receipt.result);
-      if (receipt.kind === "post" || receipt.kind === "reverse" ||
-          receipt.kind === "correct" || receipt.kind === "setOpeningPosition") {
-        const result = receipt.result as { entryIds: string[]; lastSequence: number };
-        if (result.entryIds.length !== (receipt.kind === "correct" ? 2 :
-            receipt.kind === "setOpeningPosition" ? result.entryIds.length : 1) ||
-            (receipt.kind === "setOpeningPosition" && result.entryIds.length > 1))
+      if (
+        receipt.kind === "post" ||
+        receipt.kind === "reverse" ||
+        receipt.kind === "correct" ||
+        receipt.kind === "setOpeningPosition"
+      ) {
+        const result = receipt.result as {
+          entryIds: string[];
+          lastSequence: number;
+        };
+        if (
+          result.entryIds.length !==
+            (receipt.kind === "correct"
+              ? 2
+              : receipt.kind === "setOpeningPosition"
+                ? result.entryIds.length
+                : 1) ||
+          (receipt.kind === "setOpeningPosition" && result.entryIds.length > 1)
+        )
           throw new Error("receipt count");
         for (const id of result.entryIds) {
           const entry = tx.getEntry(id);
-          if (!entry || entry.commandId !== receipt.commandId ||
-              entry.sequence > result.lastSequence) throw new Error("receipt entry");
+          if (
+            !entry ||
+            entry.commandId !== receipt.commandId ||
+            entry.sequence > result.lastSequence
+          )
+            throw new Error("receipt entry");
         }
       }
-    } catch { issues.push(`receipt:${receipt.commandId}`); }
+    } catch {
+      issues.push(`receipt:${receipt.commandId}`);
+    }
   }
   const parties = tx.listParties();
   for (const party of parties) {

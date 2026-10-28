@@ -285,7 +285,10 @@ export function createCoreService(deps: {
     tx: LedgerReader,
     input: ReverseCommand,
   ): PreviewResult {
-    const command = validatedCommand("reverse", input) as unknown as ReverseCommand;
+    const command = validatedCommand(
+      "reverse",
+      input,
+    ) as unknown as ReverseCommand;
     const entry = original(tx, command.originalEntryId);
     const p = party(tx, entry.partyId, true);
     const line = entry.lines.find(
@@ -304,7 +307,10 @@ export function createCoreService(deps: {
     tx: LedgerReader,
     input: CorrectionCommand,
   ): readonly PreviewResult[] {
-    const command = validatedCommand("correct", input) as unknown as CorrectionCommand;
+    const command = validatedCommand(
+      "correct",
+      input,
+    ) as unknown as CorrectionCommand;
     const old = original(tx, command.originalEntryId);
     const oldParty = party(tx, old.partyId, true);
     const newParty = party(tx, command.replacement.partyId, true);
@@ -437,11 +443,13 @@ export function createCoreService(deps: {
           throw new CoreError("PREVIEW_STALE");
         tx.deleteParty(p.id);
       }),
-    previewPost: (command) =>
-      store.read((tx) => {
+    previewPost: async (command) => {
+      await ready;
+      return store.read((tx) => {
         assertHealth(tx);
         return postPreview(tx, command);
-      }),
+      });
+    },
     post: (command) =>
       run("post", command, (tx, command) => {
         const plan = postPreview(tx, command);
@@ -495,11 +503,13 @@ export function createCoreService(deps: {
           lastSequence: entry.sequence,
         };
       }),
-    previewReverse: (command) =>
-      store.read((tx) => {
+    previewReverse: async (command) => {
+      await ready;
+      return store.read((tx) => {
         assertHealth(tx);
         return reversePreview(tx, command);
-      }),
+      });
+    },
     reverse: (command) =>
       run("reverse", command, (tx, command) => {
         const plan = reversePreview(tx, command);
@@ -525,11 +535,13 @@ export function createCoreService(deps: {
           lastSequence: entry.sequence,
         };
       }),
-    previewCorrection: (command) =>
-      store.read((tx) => {
+    previewCorrection: async (command) => {
+      await ready;
+      return store.read((tx) => {
         assertHealth(tx);
         return correctionPreviews(tx, command);
-      }),
+      });
+    },
     correct: (command) =>
       run("correct", command, (tx, command) => {
         const plans = correctionPreviews(tx, command);
