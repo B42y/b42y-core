@@ -19,6 +19,7 @@ export class MemoryStore implements LedgerStore {
   failAt: "append" | "receipt" | "commit" | undefined;
   failOnAppendNumber: number | undefined;
   loseResponse = false;
+  failRecovery = false;
   scans = 0;
 
   private reader(): LedgerReader {
@@ -118,9 +119,11 @@ export class MemoryStore implements LedgerStore {
       throw error;
     } finally { release(); }
   }
-  async enterReadOnlyRecovery(): Promise<void> { this.readOnly = true; }
+  async enterReadOnlyRecovery(): Promise<void> { if (this.failRecovery) throw new Error('recovery write failed'); this.readOnly = true; }
   snapshot() { return { parties: [...this.parties.values()].map(copy), entries: [...this.entries.values()].map(copy), receipts: [...this.receipts.values()].map(copy), readOnly: this.readOnly }; }
   corruptEntry(change: (entry: JournalEntry) => JournalEntry): void { const first = this.entries.keys().next().value as string; this.entries.set(first, change(this.entries.get(first)!)); }
+  corruptReceipt(id: string, change: (receipt: CommandReceipt) => CommandReceipt): void { this.receipts.set(id, change(this.receipts.get(id)!)); }
+  createSequenceGap(): void { this.sequence += 1; }
 }
 
 export function fixtures() {
