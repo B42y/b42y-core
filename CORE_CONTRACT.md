@@ -1,6 +1,6 @@
 # Ba2y — Core Module Contract
 
-**Repository:** `b42y-app` (planned)  
+**Repository:** `b42y-core` (separate library repository; mobile consumer: `b42y-app`)
 **Package:** `@b42y/core`  
 **Contract version:** `1.0.0`  
 **Status:** Implementation baseline, financial rules frozen for MVP  

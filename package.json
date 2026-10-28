@@ -1,0 +1,63 @@
+{
+  "name": "@b42y/core",
+  "version": "0.1.0",
+  "description": "Pure EGP position ledger for Ba2y",
+  "type": "module",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/B42y/b42y-core.git"
+  },
+  "bugs": {
+    "url": "https://github.com/B42y/b42y-core/issues"
+  },
+  "engines": {
+    "node": "^22.18.0 || ^24.11.0"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format:check": "prettier --check .",
+    "format": "prettier --write .",
+    "test": "vitest run",
+    "test:unit": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration tests/contract",
+    "test:properties": "vitest run tests/properties",
+    "test:coverage": "vitest run --coverage",
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm run test:coverage && npm run build && npm run pack:check",
+    "pack:check": "publint && attw --pack && node scripts/consumer-smoke.mjs"
+  },
+  "devDependencies": {
+    "@arethetypeswrong/cli": "0.18.5",
+    "@changesets/cli": "2.31.0",
+    "@eslint/js": "9.39.1",
+    "@types/node": "24.9.1",
+    "@vitest/coverage-v8": "3.2.4",
+    "eslint": "9.39.1",
+    "fast-check": "4.10.2",
+    "prettier": "3.7.4",
+    "publint": "0.3.25",
+    "tsdown": "0.23.2",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.70.0",
+    "vitest": "3.2.4"
+  }
+}

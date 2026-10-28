@@ -1,0 +1,3 @@
+# ADR 0003: Versioned command receipts and previews
+
+Accepted. Command receipts compare the full deterministic canonical payload, not a hash alone. A noncryptographic checksum supports indexing and corruption checks; collision resistance is not relied on for command identity. Confirmation fields are excluded from command identity so a retry after a lost response recovers the first result. Preview fingerprints are state-binding strings, not authorization or cryptographic proofs. Party `ledgerRevision` advances for every posting, including each correction child. Metadata has a separate revision for state-bound deletion confirmation. Reversals expose a preview because they can change position direction.

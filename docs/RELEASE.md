@@ -1,0 +1,9 @@
+# Releases
+
+Run `npm ci`, `npm run check`, and `npm pack --dry-run`. Create a Changeset for each public change, run `npx changeset version` in a version PR, review the changelog, and merge after CI. A maintainer creates a protected tag `v<package.json version>` on that main commit. The tag is the only publish trigger.
+
+`release.yml` checks out that commit on a GitHub-hosted runner, checks tag/version and main ancestry, runs the full suite and package validation, checks npm for an existing version, packs an exact tarball, publishes that tarball using OIDC to `https://registry.npmjs.org` under `next`, verifies the registry version and tarball integrity, then creates a GitHub Release. A package version cannot be unpublished as a rollback strategy; issue a corrective version. No publication is claimed yet.
+
+Before first publication, verify npm organization ownership of `@b42y`, package name availability, GitHub repository visibility, and the exact `repository.url`. Configure npm Trusted Publishing for organization `B42y`, repository `b42y-core`, workflow filename `release.yml`, and direct `npm publish` permission. Set a protected `npm-release` GitHub environment with required reviewers and configure that same environment in npm. Keep the publisher on GitHub-hosted runners with `id-token: write`; do not add a token fallback. Initial package ownership may require a maintainer bootstrap publication before npm permits the trusted publisher setup. Perform that only after all contract gates pass.
+
+For CI push and manual jobs, repository or organization variable `SELF_HOSTED=true` requires a runner with labels `self-hosted`, `linux`, `x64`, and `b42y-core`. Pull requests always run on GitHub-hosted `ubuntu-latest` because their code is untrusted. The publish job also ignores `SELF_HOSTED`. `b42y-app` should install a specific verified version rather than a floating tag for production integration.

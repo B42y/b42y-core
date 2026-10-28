@@ -1,0 +1,57 @@
+name: Release
+on:
+  push:
+    tags:
+      - "v*"
+permissions:
+  contents: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: npm-release
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+          registry-url: https://registry.npmjs.org
+      - name: Check version, ancestry and pre-1.0 policy
+        shell: bash
+        run: |
+          test "${GITHUB_REF_NAME}" = "v$(node -p "require('./package.json').version")"
+          git fetch origin main
+          git merge-base --is-ancestor HEAD origin/main
+          node -e "if (!require('./package.json').version.startsWith('0.')) process.exit(1)"
+      - run: npm ci
+      - run: npm run check
+      - run: npm pack --dry-run
+      - name: Pack exact release artifact
+        shell: bash
+        run: |
+          mkdir -p .tmp
+          archive=$(npm pack --pack-destination .tmp --silent)
+          echo "TARBALL=.tmp/$archive" >> "$GITHUB_ENV"
+          echo "EXPECTED_INTEGRITY=sha512-$(openssl dgst -sha512 -binary ".tmp/$archive" | openssl base64 -A)" >> "$GITHUB_ENV"
+      - name: Reject duplicate npm version
+        shell: bash
+        run: |
+          set +e
+          output=$(npm view "@b42y/core@${GITHUB_REF_NAME#v}" version --registry=https://registry.npmjs.org 2>&1)
+          status=$?
+          set -e
+          if [ "$status" -eq 0 ]; then echo "Version already published"; exit 1; fi
+          if ! printf '%s' "$output" | grep -q 'E404'; then echo "$output"; exit 1; fi
+      - run: npm publish "$TARBALL" --access public --tag next --registry=https://registry.npmjs.org
+      - name: Verify npm and create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          test "$(npm view "@b42y/core@${GITHUB_REF_NAME#v}" version --registry=https://registry.npmjs.org)" = "${GITHUB_REF_NAME#v}"
+          test "$(npm view "@b42y/core@${GITHUB_REF_NAME#v}" dist.integrity --registry=https://registry.npmjs.org)" = "$EXPECTED_INTEGRITY"
+          gh release create "$GITHUB_REF_NAME" --target "$GITHUB_SHA" --verify-tag --generate-notes
