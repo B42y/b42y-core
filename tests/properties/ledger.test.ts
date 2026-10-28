@@ -166,3 +166,109 @@ it("random reversals, corrections and retries preserve the independent oracle", 
     { numRuns: 20 },
   );
 });
+
+it("multi-party corrections and reversals match a bigint oracle", async () => {
+  await fc.assert(
+    fc.asyncProperty(
+      fc.array(
+        fc.record({
+          amount: fc.integer({ min: 1, max: 10000 }),
+          source: fc.integer({ min: 0, max: 2 }),
+          target: fc.integer({ min: 0, max: 2 }),
+          correct: fc.boolean(),
+          reverse: fc.boolean(),
+        }),
+        { minLength: 1, maxLength: 30 },
+      ),
+      async (actions) => {
+        const store = new MemoryStore();
+        const fixture = fixtures();
+        const core = createCoreService({ store, ...fixture });
+        const parties = await Promise.all(
+          ["A", "B", "C"].map((displayName) =>
+            core.createParty({ commandId: fixture.ids.newId(), displayName }),
+          ),
+        );
+        const oracle = [0n, 0n, 0n];
+        for (const action of actions) {
+          const source = parties[action.source]!;
+          const post = {
+            commandId: fixture.ids.newId(),
+            partyId: source.id,
+            operation: "ADD_RECEIVABLE" as const,
+            amountMinor: action.amount,
+            occurredAtUtc,
+          };
+          const postPlan = await core.previewPost(post);
+          const first = await core.post({
+            ...post,
+            confirmation: {
+              previewFingerprint: postPlan.previewFingerprint,
+              expectedPartyRevision: postPlan.partyRevision,
+            },
+          });
+          oracle[action.source]! += BigInt(action.amount);
+          if (action.correct) {
+            const target = parties[action.target]!;
+            const command = {
+              commandId: fixture.ids.newId(),
+              originalEntryId: first.entryIds[0]!,
+              replacement: {
+                partyId: target.id,
+                operation: "ADD_PAYABLE" as const,
+                amountMinor: action.amount,
+                occurredAtUtc,
+              },
+            };
+            const plans = await core.previewCorrection(command);
+            const result = await core.correct({
+              ...command,
+              confirmations: plans.map((plan) => ({
+                partyId: plan.partyId,
+                previewFingerprint: plan.previewFingerprint,
+                expectedPartyRevision: plan.partyRevision,
+              })),
+            });
+            oracle[action.source]! -= BigInt(action.amount);
+            oracle[action.target]! -= BigInt(action.amount);
+            if (action.reverse) {
+              const command = {
+                commandId: fixture.ids.newId(),
+                originalEntryId: result.entryIds[1]!,
+              };
+              const plan = await core.previewReverse(command);
+              await core.reverse({
+                ...command,
+                confirmation: {
+                  previewFingerprint: plan.previewFingerprint,
+                  expectedPartyRevision: plan.partyRevision,
+                },
+              });
+              oracle[action.target]! += BigInt(action.amount);
+            }
+          } else if (action.reverse) {
+            const command = {
+              commandId: fixture.ids.newId(),
+              originalEntryId: first.entryIds[0]!,
+            };
+            const plan = await core.previewReverse(command);
+            await core.reverse({
+              ...command,
+              confirmation: {
+                previewFingerprint: plan.previewFingerprint,
+                expectedPartyRevision: plan.partyRevision,
+              },
+            });
+            oracle[action.source]! -= BigInt(action.amount);
+          }
+          for (let i = 0; i < parties.length; i++)
+            expect(BigInt(await core.getPartyPosition(parties[i]!.id))).toBe(
+              oracle[i],
+            );
+        }
+        expect((await core.verifyLedger()).valid).toBe(true);
+      },
+    ),
+    { numRuns: 20 },
+  );
+});

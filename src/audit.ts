@@ -9,6 +9,9 @@ import type { LedgerIntegrityReport } from "./types.js";
 /** Full audit is explicit and linear in entries plus parties, with bounded per-entry work. */
 export function auditLedger(tx: LedgerReader): LedgerIntegrityReport {
   const issues: string[] = [];
+  const issue = (value: string): void => {
+    if (issues.length < 100) issues.push(value);
+  };
   const positions = new Map<
     string,
     { amountMinor: number; revision: number }
@@ -124,10 +127,10 @@ export function auditLedger(tx: LedgerReader): LedgerIntegrityReport {
         else throw new Error("correction pair");
       } else if (pendingCorrection) throw new Error("correction pair");
     } catch {
-      issues.push(`entry:${entry.id}`);
+      issue(`entry:${entry.id}`);
     }
   }
-  if (pendingCorrection) issues.push(`correction:${pendingCorrection.id}`);
+  if (pendingCorrection) issue(`correction:${pendingCorrection.id}`);
   const kinds: readonly string[] = [
     "createParty",
     "editParty",
@@ -196,7 +199,7 @@ export function auditLedger(tx: LedgerReader): LedgerIntegrityReport {
         }
       }
     } catch {
-      issues.push(`receipt:${receipt.commandId}`);
+      issue(`receipt:${receipt.commandId}`);
     }
   }
   const parties = tx.listParties();
@@ -208,9 +211,9 @@ export function auditLedger(tx: LedgerReader): LedgerIntegrityReport {
       projected.revision !== derived.revision ||
       projected.amountMinor !== derived.amountMinor
     )
-      issues.push(`party:${party.id}`);
+      issue(`party:${party.id}`);
   }
-  if (tx.lastSequence() < last) issues.push("sequence:high-water");
+  if (tx.lastSequence() < last) issue("sequence:high-water");
   return {
     schemaVersion: 1,
     valid: issues.length === 0,

@@ -193,4 +193,66 @@ describe("hardening regressions", () => {
     expect(report.issues).toContain(`receipt:${commandId}`);
     expect(store.snapshot().readOnly).toBe(true);
   });
+  it("keeps a history cursor on its original sequence snapshot", async () => {
+    const { core, fixture } = setup();
+    const p = await core.createParty({
+      commandId: fixture.ids.newId(),
+      displayName: "A",
+    });
+    for (let i = 0; i < 3; i++)
+      await core.post({
+        commandId: fixture.ids.newId(),
+        partyId: p.id,
+        operation: "ADD_RECEIVABLE",
+        amountMinor: i + 1,
+        occurredAtUtc: date,
+      });
+    const first = await core.getPartyHistory(p.id, { limit: 1 });
+    await core.post({
+      commandId: fixture.ids.newId(),
+      partyId: p.id,
+      operation: "ADD_RECEIVABLE",
+      amountMinor: 4,
+      occurredAtUtc: date,
+    });
+    const remaining = await core.getPartyHistory(p.id, {
+      cursor: first.nextCursor!,
+      limit: 10,
+    });
+    expect(
+      [...first.items, ...remaining.items].map((entry) => entry.sequence),
+    ).toEqual([3, 2, 1]);
+    expect(
+      (await core.getPartyHistory(p.id, { limit: 10 })).items,
+    ).toHaveLength(4);
+  });
+  it("orders backdated entries by occurrence then sequence", async () => {
+    const { core, fixture } = setup();
+    const p = await core.createParty({
+      commandId: fixture.ids.newId(),
+      displayName: "A",
+    });
+    const dates = [
+      "2026-01-03T00:00:00.000Z",
+      "2026-01-01T00:00:00.000Z",
+      "2026-01-03T00:00:00.000Z",
+      "2026-01-02T00:00:00.000Z",
+    ];
+    for (const occurredAtUtc of dates)
+      await core.post({
+        commandId: fixture.ids.newId(),
+        partyId: p.id,
+        operation: "ADD_RECEIVABLE",
+        amountMinor: 1,
+        occurredAtUtc,
+      });
+    const first = await core.getPartyHistory(p.id, { limit: 2 });
+    const second = await core.getPartyHistory(p.id, {
+      cursor: first.nextCursor!,
+      limit: 2,
+    });
+    expect(
+      [...first.items, ...second.items].map((entry) => entry.sequence),
+    ).toEqual([3, 1, 4, 2]);
+  });
 });

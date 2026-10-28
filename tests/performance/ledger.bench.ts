@@ -30,6 +30,8 @@ beforeAll(async () => {
   }
   expect(store.snapshot().entries).toHaveLength(100_000);
   expect(store.scans).toBe(1);
+  expect((await core.verifyLedger()).valid).toBe(true);
+  expect(store.scans).toBe(2);
 }, 180_000);
 
 bench("indexed position and totals at 100k entries", async () => {
@@ -51,5 +53,18 @@ bench("indexed posting at 100k entries", async () => {
     amountMinor: 1,
     occurredAtUtc: fixture.clock.nowUtc(),
   });
+  expect(store.scans).toBe(before);
+});
+
+bench("indexed skewed-party history pages at 100k entries", async () => {
+  const before = store.scans;
+  const first = await core.getPartyHistory(skewed, { limit: 50 });
+  expect(first.items).toHaveLength(50);
+  const second = await core.getPartyHistory(skewed, {
+    cursor: first.nextCursor!,
+    limit: 50,
+  });
+  expect(second.items).toHaveLength(50);
+  expect(second.items[0]!.sequence).toBeLessThan(first.items.at(-1)!.sequence);
   expect(store.scans).toBe(before);
 });

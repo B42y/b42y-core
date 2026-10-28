@@ -10,6 +10,13 @@ import type {
 import type { JournalEntry, Party } from "../../src/types.js";
 
 const copy = <T>(value: T): T => structuredClone(value);
+function order(a: JournalEntry, b: JournalEntry): number {
+  return a.occurredAtUtc < b.occurredAtUtc
+    ? -1
+    : a.occurredAtUtc > b.occurredAtUtc
+      ? 1
+      : a.sequence - b.sequence;
+}
 export class MemoryStore implements LedgerStore {
   private parties = new Map<string, Party>();
   private entries = new Map<string, JournalEntry>();
@@ -73,23 +80,29 @@ export class MemoryStore implements LedgerStore {
         copy(this.positions.get(id) ?? { amountMinor: 0, revision: 0 }),
       lastSequence: () => this.sequence,
       history: (id, highWater, afterSequence, limit) => {
-        const all = (this.historyIds.get(id) ?? [])
-          .map((key) => this.entries.get(key)!)
-          .filter((entry) => entry.sequence <= highWater)
-          .sort((a, b) =>
-            b.occurredAtUtc < a.occurredAtUtc
-              ? -1
-              : b.occurredAtUtc > a.occurredAtUtc
-                ? 1
-                : b.sequence - a.sequence,
-          );
-        const start =
-          afterSequence === undefined
-            ? 0
-            : all.findIndex((entry) => entry.sequence === afterSequence) + 1;
-        if (afterSequence !== undefined && start === 0)
-          throw new CoreError("INVALID_AMOUNT");
-        return all.slice(start, start + limit).map(copy);
+        const ids = this.historyIds.get(id) ?? [];
+        let start = ids.length - 1;
+        if (afterSequence !== undefined) {
+          const cursorId = this.sequenceIndex.get(afterSequence);
+          const cursor = cursorId ? this.entries.get(cursorId) : undefined;
+          if (!cursor || cursor.partyId !== id || cursor.sequence > highWater)
+            throw new CoreError("INVALID_AMOUNT");
+          let lo = 0,
+            hi = ids.length;
+          while (lo < hi) {
+            const mid = (lo + hi) >>> 1;
+            if (order(this.entries.get(ids[mid]!)!, cursor) < 0) lo = mid + 1;
+            else hi = mid;
+          }
+          if (ids[lo] !== cursorId) throw new CoreError("INVALID_AMOUNT");
+          start = lo - 1;
+        }
+        const rows: JournalEntry[] = [];
+        for (let i = start; i >= 0 && rows.length < limit; i--) {
+          const entry = this.entries.get(ids[i]!)!;
+          if (entry.sequence <= highWater) rows.push(copy(entry));
+        }
+        return rows;
       },
       auditEntries: () => {
         this.scans += 1;
@@ -190,9 +203,20 @@ export class MemoryStore implements LedgerStore {
         const ids = this.historyIds.get(entry.partyId) ?? [];
         if (!this.historyIds.has(entry.partyId))
           put(this.historyIds, entry.partyId, []);
-        ids.push(entry.id);
+        let index = ids.length;
+        if (index > 0 && order(this.entries.get(ids[index - 1]!)!, entry) > 0) {
+          let lo = 0,
+            hi = index;
+          while (lo < hi) {
+            const mid = (lo + hi) >>> 1;
+            if (order(this.entries.get(ids[mid]!)!, entry) < 0) lo = mid + 1;
+            else hi = mid;
+          }
+          index = lo;
+        }
+        ids.splice(index, 0, entry.id);
         undo.push(() => {
-          ids.pop();
+          ids.splice(index, 1);
         });
         this.historyIds.set(entry.partyId, ids);
         if (entry.reversesEntryId)
@@ -206,13 +230,14 @@ export class MemoryStore implements LedgerStore {
           !Number.isSafeInteger(amountMinor)
         )
           throw new CoreError("LEDGER_INTEGRITY_FAILURE");
-        const last = this.historyIds.get(id)?.at(-1);
+        const last = this.sequenceIndex.get(this.sequence);
         const entry = last === undefined ? undefined : this.entries.get(last);
         const line = entry?.lines.find(
           (item) => item.accountKind === "PARTY_POSITION",
         );
         if (
           !line ||
+          entry?.partyId !== id ||
           checkedAdd(
             prior.amountMinor,
             line.side === "DEBIT" ? line.amountMinor : -line.amountMinor,
