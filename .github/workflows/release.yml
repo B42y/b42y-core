@@ -37,9 +37,21 @@ jobs:
           archive=$(npm pack --pack-destination .tmp --silent)
           echo "TARBALL=.tmp/$archive" >> "$GITHUB_ENV"
           echo "EXPECTED_INTEGRITY=sha512-$(openssl dgst -sha512 -binary ".tmp/$archive" | openssl base64 -A)" >> "$GITHUB_ENV"
-      - name: Reject duplicate npm version
+      - name: Check npm package and reject duplicate version
         shell: bash
         run: |
+          set +e
+          package_output=$(npm view @b42y/core name --registry=https://registry.npmjs.org 2>&1)
+          package_status=$?
+          set -e
+          if [ "$package_status" -ne 0 ]; then
+            if printf '%s' "$package_output" | grep -q 'E404'; then
+              echo '::error::@b42y/core is not publicly visible on npm. A maintainer must bootstrap the package or resolve its visibility and ownership, then configure the trusted publisher. See docs/RELEASE.md.'
+            else
+              echo "$package_output"
+            fi
+            exit 1
+          fi
           set +e
           output=$(npm view "@b42y/core@${GITHUB_REF_NAME#v}" version --registry=https://registry.npmjs.org 2>&1)
           status=$?
