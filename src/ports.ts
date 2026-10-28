@@ -20,9 +20,16 @@ export interface LedgerReader {
   hasPartyHistory(partyId: string): boolean;
   getPosition(partyId: string): { amountMinor: number; revision: number };
   lastSequence(): number;
-  history(partyId: string, highWater: number, afterSequence: number | undefined, limit: number): readonly JournalEntry[];
+  history(
+    partyId: string,
+    highWater: number,
+    afterSequence: number | undefined,
+    limit: number,
+  ): readonly JournalEntry[];
   /** Ordered by sequence, lazy and bounded by adapter page size. Audit-only. */
   auditEntries(): Iterable<JournalEntry>;
+  /** Lazy traversal of all receipts, including commands with no journal entry. Audit-only. */
+  auditReceipts(): Iterable<CommandReceipt>;
   isReadOnly(): boolean;
 }
 

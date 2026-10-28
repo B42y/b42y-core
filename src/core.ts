@@ -1,10 +1,4 @@
-﻿import {
-  checked,
-  checkedAdd,
-  checkedNegate,
-  positiveAmount,
-  signedAmount,
-} from "./money.js";
+import { checkedAdd, positiveAmount, signedAmount } from "./money.js";
 import {
   displayName,
   effect,
@@ -17,9 +11,10 @@ import {
 } from "./domain.js";
 import { CoreError } from "./types.js";
 import { auditLedger } from "./audit.js";
+import { createQueries } from "./queries.js";
 import { validatedCommand } from "./validation.js";
 import { sha256 } from "./digest.js";
-import { checkedReceiptResult } from './receipt.js';
+import { checkedReceiptResult } from "./receipt.js";
 import type { CommandKind } from "./validation.js";
 import type {
   Clock,
@@ -113,31 +108,7 @@ function meaning(command: object): string {
 }
 
 function canonicalHash(value: string): string {
-  return 'v2:' + sha256(value);
-}
-
-function historyCursor(
-  cursor: string,
-  partyId: string,
-): { highWater: number; lastSequence: number } {
-  try {
-    const parsed: unknown = JSON.parse(cursor);
-    if (
-      !Array.isArray(parsed) ||
-      parsed.length !== 4 ||
-      parsed[0] !== 1 ||
-      parsed[1] !== partyId ||
-      !Number.isSafeInteger(parsed[2]) ||
-      !Number.isSafeInteger(parsed[3])
-    )
-      throw new Error("bad cursor");
-    return {
-      highWater: parsed[2] as number,
-      lastSequence: parsed[3] as number,
-    };
-  } catch {
-    throw new CoreError("INVALID_AMOUNT");
-  }
+  return "v2:" + sha256(value);
 }
 
 function party(tx: LedgerReader, id: string, active = false): Party {
@@ -153,8 +124,7 @@ function original(tx: LedgerReader, id: string): JournalEntry {
   if (!found) throw new CoreError("ENTRY_NOT_FOUND");
   if (found.operation === "REVERSAL")
     throw new CoreError("REVERSAL_NOT_ALLOWED");
-  if (tx.getReversal(found.id))
-    throw new CoreError("ALREADY_REVERSED");
+  if (tx.getReversal(found.id)) throw new CoreError("ALREADY_REVERSED");
   return found;
 }
 
@@ -183,13 +153,23 @@ export function createCoreService(deps: {
   ids: IdGenerator;
 }): CoreService {
   const { store, clock, ids } = deps;
-  const ready = store.read(auditLedger).then(async (report) => {
-    if (!report.valid) {
-      try { await store.enterReadOnlyRecovery(report.issues.join(',')); }
-      catch { throw new CoreError('STORAGE_UNAVAILABLE'); }
-      throw new CoreError('READ_ONLY_RECOVERY');
+  const ready = (async () => {
+    let reason: string | undefined;
+    try {
+      const report = await store.read(auditLedger);
+      if (!report.valid) reason = report.issues.join(",");
+    } catch {
+      reason = "initial audit failed";
     }
-  });
+    if (reason === undefined) return;
+    try {
+      await store.enterReadOnlyRecovery(reason);
+    } catch {
+      throw new CoreError("STORAGE_UNAVAILABLE");
+    }
+    throw new CoreError("READ_ONLY_RECOVERY");
+  })();
+  void ready.catch(() => {});
   const now = (): string => validateUtc(clock.nowUtc());
   const newId = (): string => validateUuid(ids.newId());
   async function run<C extends { commandId: string }, T>(
@@ -206,7 +186,8 @@ export function createCoreService(deps: {
         const prior = tx.getReceipt(commandId);
         if (prior) {
           if (
-            prior.schemaVersion !== 1 || prior.kind !== kind ||
+            prior.schemaVersion !== 1 ||
+            prior.kind !== kind ||
             prior.canonicalPayloadHash !== canonicalHash(prior.canonicalPayload)
           )
             throw new CoreError("LEDGER_INTEGRITY_FAILURE");
@@ -229,8 +210,11 @@ export function createCoreService(deps: {
     } catch (error) {
       if (error instanceof CoreError) {
         if (error.code === "LEDGER_INTEGRITY_FAILURE") {
-          try { await store.enterReadOnlyRecovery(error.message); }
-          catch { throw new CoreError('STORAGE_UNAVAILABLE'); }
+          try {
+            await store.enterReadOnlyRecovery(error.message);
+          } catch {
+            throw new CoreError("STORAGE_UNAVAILABLE");
+          }
         }
         throw error;
       }
@@ -268,12 +252,17 @@ export function createCoreService(deps: {
       updatedAtUtc: entry.recordedAtUtc,
     });
     const before = tx.getPosition(p.id);
-    if (before.revision !== p.ledgerRevision) throw new CoreError("LEDGER_INTEGRITY_FAILURE");
-    tx.updatePosition(p.id, checkedAdd(before.amountMinor, input.deltaMinor), checkedAdd(p.ledgerRevision, 1));
+    if (before.revision !== p.ledgerRevision)
+      throw new CoreError("LEDGER_INTEGRITY_FAILURE");
+    tx.updatePosition(
+      p.id,
+      checkedAdd(before.amountMinor, input.deltaMinor),
+      checkedAdd(p.ledgerRevision, 1),
+    );
     return entry;
   }
-  function postPreview(tx: LedgerReader, command: PostCommand): PreviewResult {
-    validatedCommand('post', command);
+  function postPreview(tx: LedgerReader, input: PostCommand): PreviewResult {
+    const command = validatedCommand("post", input) as unknown as PostCommand;
     const p = party(tx, command.partyId, true);
     validateUtc(command.occurredAtUtc);
     const amount = positiveAmount(command.amountMinor);
@@ -294,9 +283,9 @@ export function createCoreService(deps: {
   }
   function reversePreview(
     tx: LedgerReader,
-    command: ReverseCommand,
+    input: ReverseCommand,
   ): PreviewResult {
-    validatedCommand('reverse', command);
+    const command = validatedCommand("reverse", input) as unknown as ReverseCommand;
     const entry = original(tx, command.originalEntryId);
     const p = party(tx, entry.partyId, true);
     const line = entry.lines.find(
@@ -313,9 +302,9 @@ export function createCoreService(deps: {
   }
   function correctionPreviews(
     tx: LedgerReader,
-    command: CorrectionCommand,
+    input: CorrectionCommand,
   ): readonly PreviewResult[] {
-    validatedCommand('correct', command);
+    const command = validatedCommand("correct", input) as unknown as CorrectionCommand;
     const old = original(tx, command.originalEntryId);
     const oldParty = party(tx, old.partyId, true);
     const newParty = party(tx, command.replacement.partyId, true);
@@ -343,10 +332,25 @@ export function createCoreService(deps: {
     const oldBefore = tx.getPosition(oldParty.id).amountMinor;
     const key = meaning(command);
     if (oldParty.id === newParty.id)
-      return [preview(oldParty, oldBefore, checkedAdd(undo, add), key, replacement.operation as PostOperation, checkedAdd(oldBefore, undo))];
+      return [
+        preview(
+          oldParty,
+          oldBefore,
+          checkedAdd(undo, add),
+          key,
+          replacement.operation as PostOperation,
+          checkedAdd(oldBefore, undo),
+        ),
+      ];
     return [
       preview(oldParty, oldBefore, undo, key),
-      preview(newParty, tx.getPosition(newParty.id).amountMinor, add, key, replacement.operation as PostOperation),
+      preview(
+        newParty,
+        tx.getPosition(newParty.id).amountMinor,
+        add,
+        key,
+        replacement.operation as PostOperation,
+      ),
     ];
   }
   return {
@@ -573,87 +577,11 @@ export function createCoreService(deps: {
           schemaVersion: 1,
           entryIds: [reversal.id, replacement.id],
           partyId: replacement.partyId,
-          resultingPositionMinor: tx.getPosition(replacement.partyId).amountMinor,
+          resultingPositionMinor: tx.getPosition(replacement.partyId)
+            .amountMinor,
           lastSequence: replacement.sequence,
         };
       }),
-    getPartyPosition: (id) =>
-      store.read((tx) => {
-        const p = party(tx, id);
-        return tx.getPosition(p.id).amountMinor;
-      }),
-    getTotals: () =>
-      store.read((tx) => {
-        let receivableMinor = 0;
-        let payableMinor = 0;
-        for (const p of tx.listParties()) {
-          const amount = tx.getPosition(p.id).amountMinor;
-          if (amount > 0) receivableMinor = checkedAdd(receivableMinor, amount);
-          else payableMinor = checkedAdd(payableMinor, checkedNegate(amount));
-        }
-        return { receivableMinor, payableMinor };
-      }),
-    getPartyHistory: (id, paging) =>
-      store.read((tx) => {
-        const p = party(tx, id);
-        const limit = checked(paging.limit);
-        if (limit < 1 || limit > 100) throw new CoreError("INVALID_AMOUNT");
-        const cursor = paging.cursor
-          ? historyCursor(paging.cursor, p.id)
-          : undefined;
-        const highWater = cursor?.highWater ?? tx.lastSequence();
-        if (highWater < 0 || highWater > tx.lastSequence())
-          throw new CoreError("INVALID_AMOUNT");
-        const rows = tx.history(p.id, highWater, cursor?.lastSequence, limit + 1);
-        const items = rows.slice(0, limit).map((e) => ({
-          ...e,
-          visualStatus: tx.getReversal(e.id)
-            ? (tx.getReversal(e.id)?.correctionGroupId ? "CORRECTED" : "REVERSED") as "CORRECTED" | "REVERSED"
-            : ("ACTIVE" as const),
-        }));
-        const last = items.at(-1);
-        return {
-          schemaVersion: 1,
-          items,
-          ...(last && rows.length > limit
-            ? { nextCursor: canonical([1, p.id, highWater, last.sequence]) }
-            : {}),
-        };
-      }),
-    listParties: (query) =>
-      store.read((tx) => {
-        const limit = checked(query.limit);
-        if (limit < 1 || limit > 100) throw new CoreError("INVALID_AMOUNT");
-        const search = query.search ? normalizeName(query.search) : "";
-        const sorted = tx
-          .listParties()
-          .filter(
-            (p) =>
-              (query.includeArchived || p.status === "ACTIVE") &&
-              p.searchName.includes(search),
-          )
-          .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-        const start = query.cursor
-          ? sorted.findIndex((p) => p.id === query.cursor) + 1
-          : 0;
-        if (query.cursor && start === 0) throw new CoreError("INVALID_AMOUNT");
-        const items = sorted.slice(start, start + limit);
-        const last = items.at(-1);
-        return {
-          schemaVersion: 1,
-          items,
-          ...(last && start + limit < sorted.length
-            ? { nextCursor: last.id }
-            : {}),
-        };
-      }),
-    verifyLedger: async () => {
-      const report = await store.read(auditLedger);
-      if (!report.valid)
-        await store.enterReadOnlyRecovery(report.issues.join(","));
-      return report;
-    },
+    ...createQueries(store),
   };
 }
-
-

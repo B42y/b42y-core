@@ -113,16 +113,20 @@ export function preview(
     (operation === "PAY" && settlementBefore > 0)
   )
     warning = "UNEXPECTED_SETTLEMENT";
-  const previewFingerprint = 'v2:' + sha256(JSON.stringify([
-    1,
-    meaning,
-    party.id,
-    before,
-    delta,
-    after,
-    party.ledgerRevision,
-    warning ?? null,
-  ]));
+  const previewFingerprint =
+    "v2:" +
+    sha256(
+      JSON.stringify([
+        1,
+        meaning,
+        party.id,
+        before,
+        delta,
+        after,
+        party.ledgerRevision,
+        warning ?? null,
+      ]),
+    );
   return {
     schemaVersion: 1,
     partyId: party.id,
