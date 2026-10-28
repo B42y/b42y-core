@@ -6,7 +6,7 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/B42y/b42y-core.git"
+    "url": "https://github.com/B42y/b42y-core.git"
   },
   "bugs": {
     "url": "https://github.com/B42y/b42y-core/issues"
@@ -28,8 +28,7 @@
     }
   },
   "publishConfig": {
-    "access": "public",
-    "registry": "https://registry.npmjs.org"
+    "registry": "https://npm.pkg.github.com"
   },
   "scripts": {
     "build": "tsdown",

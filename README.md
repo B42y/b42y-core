@@ -22,6 +22,6 @@ await core.post({
 console.log(await core.getPartyPosition(party.id)); // 100000 piasters
 ```
 
-`store` must implement the [transaction port](docs/INTEGRATION.md); the in-memory adapter is tests-only. Install with `npm install @b42y/core@next` after its first verified publication.
+`store` must implement the [transaction port](docs/INTEGRATION.md); the in-memory adapter is tests-only. After its first verified publication to GitHub Packages, configure `@b42y:registry=https://npm.pkg.github.com` in the consuming project's `.npmrc`, authenticate to GitHub Packages, then run `npm install @b42y/core@next`. GitHub Packages requires authentication even for public npm packages; see the [release process](docs/RELEASE.md).
 
 Development: `npm ci`, `npm run check`, `npm pack --dry-run`. See [API](docs/API.md), [mobile integration](docs/INTEGRATION.md), [traceability](docs/CONTRACT_TRACEABILITY.md), and [release process](docs/RELEASE.md).

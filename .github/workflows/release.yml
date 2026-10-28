@@ -11,7 +11,7 @@ jobs:
     environment: npm-release
     permissions:
       contents: write
-      id-token: write
+      packages: write
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -19,7 +19,8 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "24"
-          registry-url: https://registry.npmjs.org
+          registry-url: https://npm.pkg.github.com
+          scope: "@b42y"
       - name: Check version, ancestry and pre-1.0 policy
         shell: bash
         run: |
@@ -37,33 +38,31 @@ jobs:
           archive=$(npm pack --pack-destination .tmp --silent)
           echo "TARBALL=.tmp/$archive" >> "$GITHUB_ENV"
           echo "EXPECTED_INTEGRITY=sha512-$(openssl dgst -sha512 -binary ".tmp/$archive" | openssl base64 -A)" >> "$GITHUB_ENV"
-      - name: Check npm package and reject duplicate version
+      - name: Reject duplicate GitHub Packages version
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set +e
-          package_output=$(npm view @b42y/core name --registry=https://registry.npmjs.org 2>&1)
-          package_status=$?
-          set -e
-          if [ "$package_status" -ne 0 ]; then
-            if printf '%s' "$package_output" | grep -q 'E404'; then
-              echo '::error::@b42y/core is not publicly visible on npm. A maintainer must bootstrap the package or resolve its visibility and ownership, then configure the trusted publisher. See docs/RELEASE.md.'
-            else
-              echo "$package_output"
-            fi
-            exit 1
-          fi
-          set +e
-          output=$(npm view "@b42y/core@${GITHUB_REF_NAME#v}" version --registry=https://registry.npmjs.org 2>&1)
+          output=$(npm view "@b42y/core@${GITHUB_REF_NAME#v}" version --registry=https://npm.pkg.github.com 2>&1)
           status=$?
           set -e
           if [ "$status" -eq 0 ]; then echo "Version already published"; exit 1; fi
           if ! printf '%s' "$output" | grep -q 'E404'; then echo "$output"; exit 1; fi
-      - run: npm publish "$TARBALL" --access public --tag next --registry=https://registry.npmjs.org
-      - name: Verify npm and create GitHub Release
+      - name: Publish to GitHub Packages
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: npm publish "$TARBALL" --tag next --registry=https://npm.pkg.github.com
+      - name: Verify GitHub Packages and create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          NODE_AUTH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          test "$(npm view "@b42y/core@${GITHUB_REF_NAME#v}" version --registry=https://registry.npmjs.org)" = "${GITHUB_REF_NAME#v}"
-          test "$(npm view "@b42y/core@${GITHUB_REF_NAME#v}" dist.integrity --registry=https://registry.npmjs.org)" = "$EXPECTED_INTEGRITY"
+          test "$(npm view "@b42y/core@${GITHUB_REF_NAME#v}" version --registry=https://npm.pkg.github.com)" = "${GITHUB_REF_NAME#v}"
+          mkdir -p .tmp/registry
+          published_archive=$(npm pack "@b42y/core@${GITHUB_REF_NAME#v}" --pack-destination .tmp/registry --registry=https://npm.pkg.github.com --silent)
+          actual_integrity="sha512-$(openssl dgst -sha512 -binary ".tmp/registry/$published_archive" | openssl base64 -A)"
+          test "$actual_integrity" = "$EXPECTED_INTEGRITY"
           gh release create "$GITHUB_REF_NAME" --target "$GITHUB_SHA" --verify-tag --generate-notes
