@@ -1,6 +1,10 @@
 import { CoreError } from "../../src/types.js";
 import { checkedAdd, checkedNegate } from "../../src/money.js";
 import { validateEntry } from "../../src/domain.js";
+import { allIds, insert, page } from "./history-index.js";
+import type { HistoryNode } from "./history-index.js";
+import { insertPartyId, partyIds, removePartyId } from "./party-index.js";
+import type { PartyNode } from "./party-index.js";
 import type {
   CommandReceipt,
   LedgerReader,
@@ -10,20 +14,14 @@ import type {
 import type { JournalEntry, Party } from "../../src/types.js";
 
 const copy = <T>(value: T): T => structuredClone(value);
-function order(a: JournalEntry, b: JournalEntry): number {
-  return a.occurredAtUtc < b.occurredAtUtc
-    ? -1
-    : a.occurredAtUtc > b.occurredAtUtc
-      ? 1
-      : a.sequence - b.sequence;
-}
 export class MemoryStore implements LedgerStore {
   private parties = new Map<string, Party>();
+  private partyRoot: PartyNode | undefined;
   private entries = new Map<string, JournalEntry>();
   private sequenceIndex = new Map<number, string>();
   private receipts = new Map<string, CommandReceipt>();
   private reversals = new Map<string, string>();
-  private historyIds = new Map<string, string[]>();
+  private historyRoots = new Map<string, HistoryNode>();
   private positions = new Map<
     string,
     { amountMinor: number; revision: number }
@@ -56,21 +54,16 @@ export class MemoryStore implements LedgerStore {
       },
       listParties: () => [...this.parties.values()].map(copy),
       searchParties: (search, includeArchived, cursor, limit) => {
-        const ids = [...this.parties.keys()].sort();
         if (cursor && !this.parties.has(cursor))
           throw new CoreError("INVALID_AMOUNT");
-        const rows: Party[] = [];
-        for (const id of ids) {
-          if (cursor && id <= cursor) continue;
+        const ids = partyIds(this.partyRoot, cursor, limit, (id) => {
           const party = this.parties.get(id)!;
-          if (
+          return (
             (includeArchived || party.status === "ACTIVE") &&
             party.searchName.includes(search)
-          )
-            rows.push(copy(party));
-          if (rows.length === limit) break;
-        }
-        return rows;
+          );
+        });
+        return ids.map((id) => copy(this.parties.get(id)!));
       },
       getEntry: (id) => {
         const value = this.entries.get(id);
@@ -82,7 +75,7 @@ export class MemoryStore implements LedgerStore {
           reversal === undefined ? undefined : this.entries.get(reversal);
         return value === undefined ? undefined : copy(value);
       },
-      hasPartyHistory: (id) => (this.historyIds.get(id)?.length ?? 0) > 0,
+      hasPartyHistory: (id) => this.historyRoots.has(id),
       getPosition: (id) =>
         copy(this.positions.get(id) ?? { amountMinor: 0, revision: 0 }),
       getTotals: () => {
@@ -98,29 +91,16 @@ export class MemoryStore implements LedgerStore {
       },
       lastSequence: () => this.sequence,
       history: (id, highWater, afterSequence, limit) => {
-        const ids = this.historyIds.get(id) ?? [];
-        let start = ids.length - 1;
+        let cursor: JournalEntry | undefined;
         if (afterSequence !== undefined) {
           const cursorId = this.sequenceIndex.get(afterSequence);
-          const cursor = cursorId ? this.entries.get(cursorId) : undefined;
+          cursor = cursorId ? this.entries.get(cursorId) : undefined;
           if (!cursor || cursor.partyId !== id || cursor.sequence > highWater)
             throw new CoreError("INVALID_AMOUNT");
-          let lo = 0,
-            hi = ids.length;
-          while (lo < hi) {
-            const mid = (lo + hi) >>> 1;
-            if (order(this.entries.get(ids[mid]!)!, cursor) < 0) lo = mid + 1;
-            else hi = mid;
-          }
-          if (ids[lo] !== cursorId) throw new CoreError("INVALID_AMOUNT");
-          start = lo - 1;
         }
-        const rows: JournalEntry[] = [];
-        for (let i = start; i >= 0 && rows.length < limit; i--) {
-          const entry = this.entries.get(ids[i]!)!;
-          if (entry.sequence <= highWater) rows.push(copy(entry));
-        }
-        return rows;
+        return page(this.historyRoots.get(id), highWater, cursor, limit).map(
+          (entryId) => copy(this.entries.get(entryId)!),
+        );
       },
       auditEntries: () => {
         this.scans += 1;
@@ -177,6 +157,11 @@ export class MemoryStore implements LedgerStore {
         if (this.parties.has(party.id)) throw new CoreError("INVALID_PARTY");
         put(this.parties, party.id, party);
         put(this.positions, party.id, { amountMinor: 0, revision: 0 });
+        const priorRoot = this.partyRoot;
+        this.partyRoot = insertPartyId(priorRoot, party.id);
+        undo.push(() => {
+          this.partyRoot = priorRoot;
+        });
       },
       updateParty: (party) => {
         if (!this.parties.has(party.id)) throw new CoreError("INVALID_PARTY");
@@ -184,13 +169,18 @@ export class MemoryStore implements LedgerStore {
         if (this.failAt === "partyRevision") throw new Error("injected");
       },
       deleteParty: (id) => {
-        if (this.historyIds.get(id)?.length)
+        if (this.historyRoots.has(id))
           throw new CoreError("REVERSAL_NOT_ALLOWED");
         const prior = this.parties.get(id);
         const position = this.positions.get(id);
         undo.push(() => {
           if (prior) this.parties.set(id, prior);
           if (position) this.positions.set(id, position);
+        });
+        const priorRoot = this.partyRoot;
+        this.partyRoot = removePartyId(priorRoot, id);
+        undo.push(() => {
+          this.partyRoot = priorRoot;
         });
         this.parties.delete(id);
         this.positions.delete(id);
@@ -220,25 +210,12 @@ export class MemoryStore implements LedgerStore {
         validateEntry(entry, party);
         put(this.entries, entry.id, entry);
         put(this.sequenceIndex, entry.sequence, entry.id);
-        const ids = this.historyIds.get(entry.partyId) ?? [];
-        if (!this.historyIds.has(entry.partyId))
-          put(this.historyIds, entry.partyId, []);
-        let index = ids.length;
-        if (index > 0 && order(this.entries.get(ids[index - 1]!)!, entry) > 0) {
-          let lo = 0,
-            hi = index;
-          while (lo < hi) {
-            const mid = (lo + hi) >>> 1;
-            if (order(this.entries.get(ids[mid]!)!, entry) < 0) lo = mid + 1;
-            else hi = mid;
-          }
-          index = lo;
-        }
-        ids.splice(index, 0, entry.id);
+        const priorRoot = this.historyRoots.get(entry.partyId);
+        this.historyRoots.set(entry.partyId, insert(priorRoot, entry));
         undo.push(() => {
-          ids.splice(index, 1);
+          if (priorRoot) this.historyRoots.set(entry.partyId, priorRoot);
+          else this.historyRoots.delete(entry.partyId);
         });
-        this.historyIds.set(entry.partyId, ids);
         if (entry.reversesEntryId)
           put(this.reversals, entry.reversesEntryId, entry.id);
       },
@@ -296,11 +273,15 @@ export class MemoryStore implements LedgerStore {
   snapshot() {
     return {
       parties: [...this.parties.values()].map(copy),
+      partyIds: partyIds(this.partyRoot, undefined, Infinity, () => true),
       entries: [...this.entries.values()].map(copy),
       receipts: [...this.receipts.values()].map(copy),
       positions: [...this.positions.entries()].map(copy),
       reversals: [...this.reversals.entries()].map(copy),
-      historyIds: [...this.historyIds.entries()].map(copy),
+      historyIds: [...this.historyRoots.entries()].map(([partyId, root]) => [
+        partyId,
+        allIds(root),
+      ]),
       sequenceIndex: [...this.sequenceIndex.entries()].map(copy),
       sequence: this.sequence,
       readOnly: this.readOnly,

@@ -175,11 +175,12 @@ export function createCoreService(deps: {
   async function run<C extends { commandId: string }, T>(
     kind: CommandKind,
     command: C,
-    work: (tx: LedgerTransaction, validated: C) => T,
+    work: (tx: LedgerTransaction, validated: C, key: string) => T,
   ): Promise<T> {
     const validated = validatedCommand(kind, command);
     const commandId = validated.commandId as string;
-    const payload = canonical([1, kind, meaning(validated)]);
+    const key = meaning(validated);
+    const payload = canonical([1, kind, key]);
     let payloadHash: string;
     try {
       payloadHash = canonicalHash(payload);
@@ -211,7 +212,7 @@ export function createCoreService(deps: {
           return checkedReceiptResult(kind, prior.result, tx, commandId) as T;
         }
         assertHealth(tx);
-        const result = work(tx, validated as C);
+        const result = work(tx, validated as C, key);
         tx.putReceipt({
           schemaVersion: 1,
           commandId,
@@ -276,8 +277,11 @@ export function createCoreService(deps: {
     );
     return entry;
   }
-  function postPreview(tx: LedgerReader, input: PostCommand): PreviewResult {
-    const command = validatedCommand("post", input) as unknown as PostCommand;
+  function postPreview(
+    tx: LedgerReader,
+    command: PostCommand,
+    key: string,
+  ): PreviewResult {
     const p = party(tx, command.partyId, true);
     validateUtc(command.occurredAtUtc);
     const amount = positiveAmount(command.amountMinor);
@@ -292,18 +296,15 @@ export function createCoreService(deps: {
       p,
       tx.getPosition(p.id).amountMinor,
       effect(op, amount),
-      meaning(command),
+      key,
       op,
     );
   }
   function reversePreview(
     tx: LedgerReader,
-    input: ReverseCommand,
+    command: ReverseCommand,
+    key: string,
   ): PreviewResult {
-    const command = validatedCommand(
-      "reverse",
-      input,
-    ) as unknown as ReverseCommand;
     const entry = original(tx, command.originalEntryId);
     const p = party(tx, entry.partyId, true);
     const line = entry.lines.find(
@@ -311,21 +312,13 @@ export function createCoreService(deps: {
     );
     if (!line) throw new CoreError("LEDGER_INTEGRITY_FAILURE");
     const delta = line.side === "DEBIT" ? -line.amountMinor : line.amountMinor;
-    return preview(
-      p,
-      tx.getPosition(p.id).amountMinor,
-      delta,
-      meaning(command),
-    );
+    return preview(p, tx.getPosition(p.id).amountMinor, delta, key);
   }
   function correctionPreviews(
     tx: LedgerReader,
-    input: CorrectionCommand,
+    command: CorrectionCommand,
+    key: string,
   ): readonly PreviewResult[] {
-    const command = validatedCommand(
-      "correct",
-      input,
-    ) as unknown as CorrectionCommand;
     const old = original(tx, command.originalEntryId);
     const oldParty = party(tx, old.partyId, true);
     const newParty = party(tx, command.replacement.partyId, true);
@@ -351,7 +344,6 @@ export function createCoreService(deps: {
       oldLine.side === "DEBIT" ? -oldLine.amountMinor : oldLine.amountMinor;
     const add = effect(replacement.operation, amount);
     const oldBefore = tx.getPosition(oldParty.id).amountMinor;
-    const key = meaning(command);
     if (oldParty.id === newParty.id)
       return [
         preview(
@@ -459,15 +451,20 @@ export function createCoreService(deps: {
         tx.deleteParty(p.id);
       }),
     previewPost: async (command) => {
+      const validated = validatedCommand(
+        "post",
+        command,
+      ) as unknown as PostCommand;
+      const key = meaning(validated);
       await ready;
       return store.read((tx) => {
         assertHealth(tx);
-        return postPreview(tx, command);
+        return postPreview(tx, validated, key);
       });
     },
     post: (command) =>
-      run("post", command, (tx, command) => {
-        const plan = postPreview(tx, command);
+      run("post", command, (tx, command, key) => {
+        const plan = postPreview(tx, command, key);
         requireConfirmation(plan, command.confirmation);
         const entry = append(tx, {
           commandId: command.commandId,
@@ -519,15 +516,20 @@ export function createCoreService(deps: {
         };
       }),
     previewReverse: async (command) => {
+      const validated = validatedCommand(
+        "reverse",
+        command,
+      ) as unknown as ReverseCommand;
+      const key = meaning(validated);
       await ready;
       return store.read((tx) => {
         assertHealth(tx);
-        return reversePreview(tx, command);
+        return reversePreview(tx, validated, key);
       });
     },
     reverse: (command) =>
-      run("reverse", command, (tx, command) => {
-        const plan = reversePreview(tx, command);
+      run("reverse", command, (tx, command, key) => {
+        const plan = reversePreview(tx, command, key);
         requireConfirmation(plan, command.confirmation);
         const old = original(tx, command.originalEntryId);
         const entry = append(tx, {
@@ -551,15 +553,20 @@ export function createCoreService(deps: {
         };
       }),
     previewCorrection: async (command) => {
+      const validated = validatedCommand(
+        "correct",
+        command,
+      ) as unknown as CorrectionCommand;
+      const key = meaning(validated);
       await ready;
       return store.read((tx) => {
         assertHealth(tx);
-        return correctionPreviews(tx, command);
+        return correctionPreviews(tx, validated, key);
       });
     },
     correct: (command) =>
-      run("correct", command, (tx, command) => {
-        const plans = correctionPreviews(tx, command);
+      run("correct", command, (tx, command, key) => {
+        const plans = correctionPreviews(tx, command, key);
         for (const plan of plans)
           requireConfirmation(
             plan,

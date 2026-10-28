@@ -56,8 +56,6 @@ export function auditLedger(tx: LedgerReader): LedgerIntegrityReport {
         receipt.schemaVersion !== 1 ||
         receipt.commandId !== entry.commandId ||
         receipt.kind !== expectedKind ||
-        receipt.canonicalPayloadHash !==
-          `v2:${sha256(receipt.canonicalPayload)}` ||
         !result ||
         typeof result !== "object" ||
         !("entryIds" in result) ||
@@ -65,25 +63,6 @@ export function auditLedger(tx: LedgerReader): LedgerIntegrityReport {
         !result.entryIds.includes(entry.id)
       )
         throw new Error("receipt");
-      const payload: unknown = JSON.parse(receipt.canonicalPayload);
-      if (
-        !Array.isArray(payload) ||
-        payload.length !== 3 ||
-        payload[0] !== 1 ||
-        payload[1] !== expectedKind ||
-        typeof payload[2] !== "string"
-      )
-        throw new Error("receipt payload");
-      const command: unknown = JSON.parse(payload[2]);
-      if (
-        !command ||
-        typeof command !== "object" ||
-        (command as { commandId?: unknown }).commandId !== entry.commandId
-      )
-        throw new Error("receipt command");
-      checkedReceiptResult(expectedKind, result, tx, entry.commandId);
-      if (result.entryIds.length !== (expectedKind === "correct" ? 2 : 1))
-        throw new Error("receipt entries");
       const line = entry.lines.find(
         (item) => item.accountKind === "PARTY_POSITION",
       )!;

@@ -73,6 +73,18 @@ bench("indexed posting at 100k entries", async () => {
   expect(store.scans).toBe(before);
 });
 
+bench("backdated posting on skewed party at 100k entries", async () => {
+  const before = store.scans;
+  await core.post({
+    commandId: fixture.ids.newId(),
+    partyId: skewed,
+    operation: "ADD_RECEIVABLE",
+    amountMinor: 1,
+    occurredAtUtc: "2020-01-01T00:00:00.000Z",
+  });
+  expect(store.scans).toBe(before);
+});
+
 bench("indexed skewed-party history pages at 100k entries", async () => {
   const before = store.scans;
   const first = await core.getPartyHistory(skewed, { limit: 50 });
@@ -93,4 +105,9 @@ bench("totals across 10k parties", async () => {
     payableMinor: 0,
   });
   expect(manyStore.scans).toBe(before);
+});
+
+bench("first party search page across 10k parties", async () => {
+  const page = await manyCore.listParties({ limit: 50 });
+  expect(page.items).toHaveLength(50);
 });

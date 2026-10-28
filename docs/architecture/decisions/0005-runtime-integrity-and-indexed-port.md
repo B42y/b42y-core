@@ -12,4 +12,8 @@ The storage port exposes indexed receipt, entry, reversal, position, history, se
 
 The in-memory adapter verifies command behavior and rollback. The SQLCipher adapter must supply durable snapshots, indexes, uniqueness and foreign keys, immutable rows, recovery persistence, SQLite integrity checks, and measured query plans. Those adapter guarantees are pending.
 
+The in-memory test adapter uses persistent ordered indexes for party IDs and per-party history. Backdated posting no longer shifts a full history array, and first-page party search no longer sorts all IDs. Index updates remain expected logarithmic work; full audit remains linear in stored records, and substring search can scan many parties. Receipt hashing and parsing occur once per receipt during full audit, while the journal pass checks its linkage.
+
+The command facade validates and canonicalizes command meaning once before entering the writer. It still recomputes the position-dependent preview and confirmation against transaction state. This removes repeated bounded input work without weakening preview freshness.
+
 The position projection is the only financial cache in the core. No separate in-process balance cache or aggregate totals projection is added. A 10,000-party host benchmark showed that materializing all party records for totals was slow, so `getTotals()` now aggregates existing position rows through the storage port. The native adapter should measure this query before tuning SQLite's page cache or introducing another transactional projection. The adapter starts with WAL and `synchronous=FULL` to meet the power-loss durability requirement; device tests must verify the actual setting and behavior.
